@@ -1951,7 +1951,7 @@ static void update_untouch_arrary(u8* virgin_map){
   u32  i = (afl_map_size>> 2);
 
 #endif /* ^__x86_64__ */
-  while (i--) {
+  while (i) {
       u8* vir = (u8*)virgin;
       u32 index_lh = 0;
 #ifdef __x86_64__
@@ -1982,6 +1982,7 @@ static void update_untouch_arrary(u8* virgin_map){
       }
 #endif /* ^__x86_64__ */
       virgin++;
+      i--;
   }
   
 }
