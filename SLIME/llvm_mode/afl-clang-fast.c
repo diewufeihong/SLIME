@@ -343,7 +343,7 @@ int main(int argc, char** argv) {
   }
   
 /* Determine the output redirection path, created by LH. */
-  u8* slime_bb_str;
+  u8* slime_bb_str = NULL;
 
   for(int i_lh = 0;i_lh < argc;i_lh++){
     if(argv[i_lh]){
