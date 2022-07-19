@@ -361,7 +361,12 @@ int main(int argc, char** argv) {
   }
 
   find_obj(argv[0]);
-  setenv("SLIME_BB_NAME",slime_bb_str,1);
+  if(slime_bb_str != NULL){
+     setenv("SLIME_BB_NAME",slime_bb_str,1);
+  } else {  
+     unsetenv("SLIME_BB_NAME");
+  }
+     
   edit_params(argc, argv);   
   execvp(cc_params[0], (char**)cc_params);
   FATAL("Oops, failed to execute '%s' - check your PATH", cc_params[0]);
