@@ -135,7 +135,7 @@ export AFL_LLVM_DOCUMENT_IDS="/xpdf-4.00_tmp_1/result.bb"
 ### Citation:
 
 ```
-@inproceedings{10.1145/3533767.3534385,
+@inproceedings{lyu2022slime,
 author = {Lyu, Chenyang and Liang, Hong and Ji, Shouling and Zhang, Xuhong and Zhao, Binbin and Han, Meng and Li, Yun and Wang, Zhe and Wang, Wenhai and Beyah, Raheem},
 title = {SLIME: Program-Sensitive Energy Allocation for Fuzzing},
 year = {2022},
