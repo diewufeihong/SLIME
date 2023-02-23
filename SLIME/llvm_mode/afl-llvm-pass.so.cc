@@ -262,20 +262,12 @@ bool AFLCoverage::runOnModule(Module &M) {
     }
 
     for (auto &BB : F) {  
-      u32 succ_num = 0;
-      for (succ_iterator SI = succ_begin(&BB), SE = succ_end(&BB); SI != SE; ++SI){
-        succ_num++;
-      }
       struct bb *bb_now = (struct bb *)malloc(sizeof(struct bb));
+      bb_now->instrument = 1;
       bb_now->bb_mem_num = 0;
       bb_now->bb_func_num = 0;
       bb_now->bb_global_num = 0;
       bb_now->bb_global_assign_num = 0;
-      if(succ_num > 1) {
-        bb_now->instrument = 1;
-      } else {
-        bb_now->instrument = 0;
-      }
 
       /* Determine some static analysis information for each basic block. Added by LH. */ 
       for (BasicBlock::iterator inst = BB.begin(); inst != BB.end(); ++inst){
@@ -466,11 +458,12 @@ bool AFLCoverage::runOnModule(Module &M) {
   }  
 	b = bb_queue;
 
+  uint32_t afl_global_id = (afl_global_bb_id > afl_global_edge_id) ? afl_global_bb_id : afl_global_edge_id;
 
 #ifdef __x86_64__
-  fprintf(bb_file, "%u\n", ((afl_global_edge_id>>3)+1)<<3);
+  fprintf(bb_file, "%u\n", ((afl_global_id>>3)+1)<<3);
 #else
-  fprintf(bb_file, "%u\n", ((afl_global_edge_id>>2)+1)<<2);
+  fprintf(bb_file, "%u\n", ((afl_global_id>>2)+1)<<2);
 #endif /* ^__x86_64__ */
 
 

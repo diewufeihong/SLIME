@@ -102,11 +102,9 @@ u64 last_time_lh = 0;                               /* Record the last time (jud
 u64 pre_cycle_lh = 0;                               /* Record the cycle value */
 u64 max_interesting = 0;                            /* Three-hour historical maximum of the number of unique paths + unique crashes */
 u64 now_interesting = 0;                            /* The number of unique path + unique crashes in the current three hours */
-u64 exploit_time = 0;                               /* The number of executions in the exploit phase */
 
 EXP_ST u32* last_bb_ptr;                            /* SHM with the last basic block passed at runtime */
 static bool* bug_bb;                       /* Mark whether it is a basic block with a high incidence of bugs */
-static bool* cmp_edge;                  /* Mark whether it is the edge with constant jumping to */
 static bool* touched_edge;              /* Mark whether the edge is  touched */
 static u32* mem_num;                       /* Number of basic block memory access */
 static u32* func_num;                      /* Number of syscalls in basic block */
@@ -115,12 +113,25 @@ static u32* untouch_num;                   /* Number of subsequent basic blocks 
 static u32* global_assign_num;             /* Number of global variable assignments in basic block */
 static u32* hash_head;                     /* Head basic block corresponding to edge hash */
 static u32* hash_end;                      /* The tail basic block corresponding to the edge hash */
+static u32* cmp_edge;                      /* Mark the basic block id where the edge with constant jumping to */
 static u32 top_len[TOP_NUM];                        /* The actual length of the top queue */
 static u32 len_max = 0;                             /* The max number of input length */
 static u32 len_min = 0;                             /* The max number of input length */
+static u32 bug_max = 0;                             /* The max number of potential buggy basic block */
+static u32 mem_max = 0;                             /* The max number of memory access operation */
+static u32 func_max = 0;                            /* The max number of syscall function call */
+static u32 loop_max = 0;                            /* The max number of instructions in loop */
+static u32 global_max = 0;                          /* The max number of global variables */
+static u32 untouch_max = 0;                         /* The max number of untouched neighborhood */
+static u32 cmp_const_max = 0;                       /* The max number of solved comparison with const instr */
+static u32 global_assign_max = 0;                   /* The max number of global variable assignment */
 static u64 exec_us_max = 0;                         /* The longest execution time (us) */
 static u64 exec_us_min = 0;                         /* The shortest execution time (us)              */
 static u64 depth_max = 0;                           /* The max path depth */
+static u64 exec_min = 0;                            /* The min number of execution times */
+static u64 bit_max = 0;                             /* The max bitmap occupation number */
+static u64 interesting_max = 0;                     /* The max interesting testcases number found by single seed */
+static double edge_change_eff_max = 0.0;            /* The global maximum edge change efficiency */
 
 static u64 all_explore_interesting[TOP_NUM];        /* The sum of interesting cases found in explore stage */
 static u64 exec_time[TOP_NUM];                      /* Exec time for every top queue in all exploit stage */
@@ -511,7 +522,6 @@ static u64 get_cur_time(void);
 
 static void initialize_lh(void){
   bug_bb = (bool*)calloc(afl_map_size, sizeof(bool));
-  cmp_edge = (bool*)calloc(afl_map_size, sizeof(bool));
   touched_edge = (bool*)calloc(afl_map_size, sizeof(bool));
   mem_num = (u32*)calloc(afl_map_size, sizeof(u32));
   func_num = (u32*)calloc(afl_map_size, sizeof(u32));
@@ -520,6 +530,7 @@ static void initialize_lh(void){
   global_assign_num = (u32*)calloc(afl_map_size, sizeof(u32));
   hash_head = (u32*)calloc(afl_map_size, sizeof(u32));
   hash_end = (u32*)calloc(afl_map_size, sizeof(u32));
+  cmp_edge = (u32*)calloc(afl_map_size, sizeof(u32));
   top_rated = (struct queue_entry**)malloc(sizeof(struct queue_entry*)*afl_map_size);
 
   virgin_bits = (u8*)calloc(afl_map_size, sizeof(u8));
@@ -609,9 +620,6 @@ static void get_bb_list(u8* target_file){
         if(fscanf(bb_fp,"%u",&cur_edge)==-1){
           printf("Error in fscanf function.\n");
         } 
-        if(cur_loc > afl_map_size){
-          break;
-        }
 	      untouch_num[head_id]++;
         hash = cur_edge;
 		    hash_head[hash] = head_id;
@@ -621,10 +629,7 @@ static void get_bb_list(u8* target_file){
     else if(type == 'c'){
       u32 cmp_sub_loc;
       while(fscanf(bb_fp,"%u",&cmp_sub_loc)){
-        if(cmp_sub_loc > afl_map_size){
-          break;
-        }
-	      cmp_edge[cmp_sub_loc ^ (head_id>>1)] = true;
+	      cmp_edge[head_id] = cmp_sub_loc;
       }
     } else if(type == 'e'){
       break;
@@ -648,14 +653,26 @@ static void calculate_case_score(struct queue_entry* q, struct hash_map* hash_ma
   q->loop_num = hash_map_index->loop_num;
   q->cmp_const_num = hash_map_index->cmp_const_num;
 
-  for(u32 i_lh = 0; i_lh < TOP_NUM - 12; i_lh++){
+  for(u32 i_lh = 0; i_lh < TOP_NUM; i_lh++){
     if(good_top[i_lh] > 0){
       switch (i_lh) {
-        case 0: q->score += (double)((double)(exec_us_min) + 0.00000000001)/((double)(q->exec_us) + 0.00000000001); break;
-        case 1: q->score += (double)((double)(q->exec_us) + 0.00000000001)/((double)(exec_us_max) + 0.00000000001); break;
-        case 2: q->score += (double)((double)(q->len) + 0.00000000001)/((double)(len_max) + 0.00000000001); break;
-        case 3: q->score += (double)((double)(len_min) + 0.00000000001)/((double)(q->len) + 0.00000000001); break;
-        case 4: q->score += (double)((double)(q->depth) + 0.00000000001)/((double)(depth_max) + 0.00000000001); break;
+        case 0:  q->score += (double)((double)(exec_us_min) + 0.00000000001)/((double)(q->exec_us) + 0.00000000001); break;
+        case 1:  q->score += (double)((double)(q->exec_us) + 0.00000000001)/((double)(exec_us_max) + 0.00000000001); break;
+        case 2:  q->score += (double)((double)(q->len) + 0.00000000001)/((double)(len_max) + 0.00000000001); break;
+        case 3:  q->score += (double)((double)(len_min) + 0.00000000001)/((double)(q->len) + 0.00000000001); break;
+        case 4:  q->score += (double)((double)(q->depth) + 0.00000000001)/((double)(depth_max) + 0.00000000001); break;
+        case 5:  q->score += (double)((double)(q->edge_change_efficiency) + 0.00000000001)/((double)(edge_change_eff_max) + 0.00000000001); break;
+        case 6:  q->score += (double)((double)(q->bit_num) + 0.00000000001)/((double)(bit_max) + 0.00000000001); break;
+        case 7:  q->score += (double)((double)(q->interesting) + 0.00000000001)/((double)(interesting_max) + 0.00000000001); break;
+        case 8:  q->score += (double)((double)(q->cmp_const_num) + 0.00000000001)/((double)(cmp_const_max) + 0.00000000001); break;
+        case 9:  q->score += (double)((double)(q->untouch_num) + 0.00000000001)/((double)(untouch_max) + 0.00000000001); break;
+        case 10: q->score += (double)((double)(q->mem_num) + 0.00000000001)/((double)(mem_max) + 0.00000000001); break;
+        case 11: q->score += (double)((double)(q->func_num) + 0.00000000001)/((double)(func_max) + 0.00000000001); break;
+        case 12: q->score += (double)((double)(q->loop_num) + 0.00000000001)/((double)(loop_max) + 0.00000000001); break;
+        case 13: q->score += (double)((double)(q->global_num) + 0.00000000001)/((double)(global_max) + 0.00000000001); break;
+        case 14: q->score += (double)((double)(q->global_assign_num) + 0.00000000001)/((double)(global_assign_max) + 0.00000000001); break;
+        case 15: q->score += (double)((double)(q->bug_num) + 0.00000000001)/((double)(bug_max) + 0.00000000001); break;
+        case 16: q->score += (double)((double)(exec_min) + 0.00000000001)/((double)(q->exec_num) + 0.00000000001); break;
         default: break;
       }
     }
@@ -1942,15 +1959,15 @@ static void update_top_case(struct queue_entry *q){
 
 
 /* Update the trigger situation of each basic block. Created by LH. */
-static void update_untouch_arrary(u8* virgin_map){
+static void update_untouch_array(u8* virgin_map){
 #ifdef __x86_64__
   u64* virgin  = (u64*)virgin_map;
   u32  i = (afl_map_size >> 3);
 #else
   u32* virgin  = (u32*)virgin_map;
   u32  i = (afl_map_size>> 2);
-
 #endif /* ^__x86_64__ */
+
   while (i) {
       u8* vir = (u8*)virgin;
       u32 index_lh = 0;
@@ -2021,7 +2038,6 @@ static void update_top_queue(void){
     }
     case_hash_location++;
   }
-
 }
 
 
@@ -2037,7 +2053,7 @@ static void update_queue_score(void){
   u32 sort_result[TOP_NUM];
 
   memset(old_good_top,0,sizeof(old_good_top));
-  for(u32 i_lh = 0; i_lh < TOP_NUM - 12; i_lh++){
+  for(u32 i_lh = 0; i_lh < TOP_NUM; i_lh++){
     old_good_top[i_lh] = good_top[i_lh];
   }
   
@@ -2048,11 +2064,23 @@ static void update_queue_score(void){
     sort_result[i_lh] = i_lh;
     if(top_queue[i_lh]){
       switch (i_lh) {
-        case 0: exec_us_min = top_queue[i_lh]->testcase->exec_us; break;
-        case 1: exec_us_max = top_queue[i_lh]->testcase->exec_us; break;
-        case 2: len_max = top_queue[i_lh]->testcase->len; break;
-        case 3: len_min = top_queue[i_lh]->testcase->len; break;
-        case 4: depth_max = top_queue[i_lh]->testcase->depth; break;
+        case 0:  exec_us_min = top_queue[i_lh]->testcase->exec_us; break;
+        case 1:  exec_us_max = top_queue[i_lh]->testcase->exec_us; break;
+        case 2:  len_max = top_queue[i_lh]->testcase->len; break;
+        case 3:  len_min = top_queue[i_lh]->testcase->len; break;
+        case 4:  depth_max = top_queue[i_lh]->testcase->depth; break;
+        case 5:  edge_change_eff_max = top_queue[i_lh]->testcase->edge_change_efficiency; break;
+        case 6:  bit_max = top_queue[i_lh]->testcase->bit_num; break;
+        case 7:  interesting_max = top_queue[i_lh]->testcase->interesting; break;
+        case 8:  cmp_const_max = top_queue[i_lh]->testcase->cmp_const_num; break;
+        case 9:  untouch_max = top_queue[i_lh]->testcase->untouch_num; break;
+        case 10: mem_max = top_queue[i_lh]->testcase->mem_num; break;
+        case 11: func_max = top_queue[i_lh]->testcase->func_num; break;
+        case 12: loop_max = top_queue[i_lh]->testcase->loop_num; break;
+        case 13: global_max = top_queue[i_lh]->testcase->global_num; break;
+        case 14: global_assign_max = top_queue[i_lh]->testcase->global_assign_num; break;
+        case 15: bug_max = top_queue[i_lh]->testcase->bug_num; break;
+        case 16: exec_min = top_queue[i_lh]->testcase->exec_num; break;
         default: break;
       } 
     }
@@ -2094,12 +2122,10 @@ static void update_queue_score(void){
   u32 now_select = 0;
   for(u32 i_lh = 0; i_lh < TOP_NUM; i_lh++){
     now_select = sort_result[i_lh];
-    if(now_select < TOP_NUM - 12){
-      good_top[now_select] = 1;
-      has_good_top = 1;
-      if(good_top[now_select] != old_good_top[now_select]){
-        good_top_update = 1;
-      }
+    good_top[now_select] = 1;
+    has_good_top = 1;
+    if(good_top[now_select] != old_good_top[now_select]){
+      good_top_update = 1;
     }
     selected++;
     if(i_lh == TOP_NUM - 1) break; 
@@ -2110,7 +2136,7 @@ static void update_queue_score(void){
   }
 
   // calculate score 
-  if(good_top_update){
+  if(good_top_update || has_good_top){
     u32 case_hash_location = 1;
     u32 tmp_hash_total = hash_total;
     struct hash_map * hash_index = cksum_hash_map[hash_cksum_now[case_hash_location]];
@@ -2123,14 +2149,26 @@ static void update_queue_score(void){
         while(score_cur){
           q = score_cur->testcase;
           q->score = 0.0;
-          for(u32 i_lh = 0; i_lh < TOP_NUM - 12; i_lh++){
+          for(u32 i_lh = 0; i_lh < TOP_NUM; i_lh++){
             if(good_top[i_lh]){
               switch (i_lh) {
-                case 0: q->score += (double)((double)(exec_us_min) + 0.00000000001)/((double)(q->exec_us) + 0.00000000001); break;
-                case 1: q->score += (double)((double)(q->exec_us) + 0.00000000001)/((double)(exec_us_max) + 0.00000000001); break;
-                case 2: q->score += (double)((double)(q->len) + 0.00000000001)/((double)(len_max) + 0.00000000001); break;
-                case 3: q->score += (double)((double)(len_min) + 0.00000000001)/((double)(q->len) + 0.00000000001); break;
-                case 4: q->score += (double)((double)(q->depth) + 0.00000000001)/((double)(depth_max) + 0.00000000001); break;
+                case 0:  q->score += (double)((double)(exec_us_min) + 0.00000000001)/((double)(q->exec_us) + 0.00000000001); break;
+                case 1:  q->score += (double)((double)(q->exec_us) + 0.00000000001)/((double)(exec_us_max) + 0.00000000001); break;
+                case 2:  q->score += (double)((double)(q->len) + 0.00000000001)/((double)(len_max) + 0.00000000001); break;
+                case 3:  q->score += (double)((double)(len_min) + 0.00000000001)/((double)(q->len) + 0.00000000001); break;
+                case 4:  q->score += (double)((double)(q->depth) + 0.00000000001)/((double)(depth_max) + 0.00000000001); break;
+                case 5:  q->score += (double)((double)(q->edge_change_efficiency) + 0.00000000001)/((double)(edge_change_eff_max) + 0.00000000001); break;
+                case 6:  q->score += (double)((double)(q->bit_num) + 0.00000000001)/((double)(bit_max) + 0.00000000001); break;
+                case 7:  q->score += (double)((double)(q->interesting) + 0.00000000001)/((double)(interesting_max) + 0.00000000001); break;
+                case 8:  q->score += (double)((double)(q->cmp_const_num) + 0.00000000001)/((double)(cmp_const_max) + 0.00000000001); break;
+                case 9:  q->score += (double)((double)(q->untouch_num) + 0.00000000001)/((double)(untouch_max) + 0.00000000001); break;
+                case 10: q->score += (double)((double)(q->mem_num) + 0.00000000001)/((double)(mem_max) + 0.00000000001); break;
+                case 11: q->score += (double)((double)(q->func_num) + 0.00000000001)/((double)(func_max) + 0.00000000001); break;
+                case 12: q->score += (double)((double)(q->loop_num) + 0.00000000001)/((double)(loop_max) + 0.00000000001); break;
+                case 13: q->score += (double)((double)(q->global_num) + 0.00000000001)/((double)(global_max) + 0.00000000001); break;
+                case 14: q->score += (double)((double)(q->global_assign_num) + 0.00000000001)/((double)(global_assign_max) + 0.00000000001); break;
+                case 15: q->score += (double)((double)(q->bug_num) + 0.00000000001)/((double)(bug_max) + 0.00000000001); break;
+                case 16: q->score += (double)((double)(exec_min) + 0.00000000001)/((double)(q->exec_num) + 0.00000000001); break;
                 default: break;
               }
             }
@@ -2183,33 +2221,16 @@ static void update_queue_score(void){
       case_hash_location++;
     }
     if(!score_flag) score_flag = 1;
-  } else if(has_good_top){
-    if(!score_flag) score_flag = 1;
   } else {
     score_flag = 0;
   }
 }
 
-
-/* Update top_queue to determine the reward of each top. Created by LH. */
-static void update_top_explore_interesting(void){
-  struct top_mem* top_cur = top_queue[0];
-  for(u32 i_lh = 0; i_lh < TOP_NUM; i_lh++){
-    all_explore_interesting[i_lh] = 0;
-    top_cur = top_queue[i_lh];
-    while(top_cur){
-      all_explore_interesting[i_lh] += top_cur->testcase->interesting;
-      top_cur = top_cur->next;
-    }
-  }
-}
-
 /* Update top_queue to determine the reward of each top. Created by LH. */
 static void exploration(void){
-  update_untouch_arrary(virgin_bits);
+  update_untouch_array(virgin_bits);
   update_top_queue();
   update_queue_score();
-  update_top_explore_interesting();
 }
 
 void updateUSBdata(int tmpk, u64 interesting_num){
@@ -2288,7 +2309,6 @@ static void empty_top_queue(void){
   }
 }
 
-
 static inline u32 UR(u32 limit);
 /* Adjust the entire queue. Created by LH. */
 EXP_ST void adjust_queue(char** argv) {
@@ -2304,12 +2324,6 @@ EXP_ST void adjust_queue(char** argv) {
   mode_flag = 0;
   
 }
-
-
-
-
-
-
 
 int select_algorithm(int extras) {
 
@@ -3033,7 +3047,8 @@ static inline u8 has_new_bit_lh(struct queue_entry *q, u8* virgin_map) {
         if(cur[index_lh]){
           q->bit_num++;
           if(cur[index_lh] > 1) q->loop_num++;
-          if(cmp_edge[index_lh + afl_map_size - (i<<3)]) q->cmp_const_num++;
+          u32 edge_index = index_lh + afl_map_size - (i << 3);
+          if(cmp_edge[hash_head[edge_index]] == hash_end[edge_index]) q->cmp_const_num++;
           struct bb *bb_now = NULL;
           u32 tmp_index = hash_head[index_lh + afl_map_size - (i<<3)];
 		      if(bb_exit[tmp_index] == 0){
@@ -3065,7 +3080,8 @@ static inline u8 has_new_bit_lh(struct queue_entry *q, u8* virgin_map) {
         if(cur[index_lh]){
           q->bit_num++;
           if(cur[index_lh] > 1) q->loop_num++;
-          if(cmp_edge[index_lh + afl_map_size - (i<<2)]) q->cmp_const_num++;
+          u32 edge_index = index_lh + afl_map_size - (i << 2);
+          if(cmp_edge[hash_head[edge_index]] == hash_end[edge_index]) q->cmp_const_num++;
           struct bb *bb_now = NULL;
           u32 tmp_index = hash_head[index_lh + afl_map_size - (i<<2)];
 		      if(bb_exit[tmp_index] == 0){
@@ -3244,7 +3260,8 @@ static inline u8 has_new_bit_slime_lh(struct queue_entry *q, u8* virgin_map) {
         if(cur[index_lh]){
           q->bit_num++;
           if(cur[index_lh] > 1) q->loop_num++;
-          if(cmp_edge[index_lh + afl_map_size - (i<<3)]) q->cmp_const_num++;
+          u32 edge_index = index_lh + afl_map_size - (i << 3);
+          if(cmp_edge[hash_head[edge_index]] == hash_end[edge_index]) q->cmp_const_num++;
           struct bb *bb_now = NULL;
           u32 tmp_index = hash_head[index_lh + afl_map_size - (i<<3)];
 		      if(bb_exit[tmp_index] == 0){
@@ -3269,7 +3286,8 @@ static inline u8 has_new_bit_slime_lh(struct queue_entry *q, u8* virgin_map) {
         if(cur[index_lh]){
           q->bit_num++;
           if(cur[index_lh] > 1) q->loop_num++;
-          if(cmp_edge[index_lh + afl_map_size - (i<<2)]) q->cmp_const_num++;
+          u32 edge_index = index_lh + afl_map_size - (i << 2);
+          if(cmp_edge[hash_head[edge_index]] == hash_end[edge_index]) q->cmp_const_num++;
           struct bb *bb_now = NULL;
           u32 tmp_index = hash_head[index_lh + afl_map_size - (i<<2)];
 		      if(bb_exit[tmp_index] == 0){
@@ -15172,7 +15190,6 @@ int main(int argc, char** argv) {
     
     queue_cycle++;
     if(start_flag && (queue_cycle - pre_cycle_lh >= 3)){
-      exploit_time = PILOT_EXPLOIT_TIME;
       adjust_queue(use_argv);
       pre_cycle_lh = queue_cycle;
     }

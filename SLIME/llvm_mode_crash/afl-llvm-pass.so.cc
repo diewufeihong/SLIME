@@ -56,8 +56,8 @@ namespace {
         char *afl_lto_ptr;
 
         if ((afl_lto_ptr = getenv("AFL_LLVM_LTO_STARTID")) != NULL)
-          if ((afl_global_id = (uint32_t)atoi(afl_lto_ptr)) < 0 ||
-            afl_global_id >= MAP_SIZE)
+          if ((afl_global_edge_id = (uint32_t)atoi(afl_lto_ptr)) < 0 ||
+            afl_global_edge_id >= MAP_SIZE)
             FATAL("AFL_LLVM_LTO_STARTID value of \"%s\" is not between 0 and %u\n",
               afl_lto_ptr, MAP_SIZE - 1); 
       }
@@ -68,7 +68,8 @@ namespace {
       //  return "American Fuzzy Lop Instrumentation";
       // }
       protected:
-        uint32_t     afl_global_id = 1;
+        uint32_t     afl_global_edge_id = 1;
+        uint32_t     afl_global_bb_id = 1;
   };
 
 }
@@ -122,18 +123,10 @@ bool AFLCoverage::runOnModule(Module &M) {
 	struct bb *bb_cur = NULL; 
   for (auto &F : M)
     for (auto &BB : F) {
-      u32 succ_num = 0;
-      for (succ_iterator SI = succ_begin(&BB), SE = succ_end(&BB); SI != SE; ++SI){
-        succ_num++;
-      }
       struct bb *bb_now = (struct bb *)malloc(sizeof(struct bb));
       bb_now->bb_p = &BB;
 			bb_now->next = NULL;
-      if(succ_num > 1) {
-        bb_now->instrument = 1;
-      } else {
-        bb_now->instrument = 0;
-      }
+      bb_now->instrument = 1;
       if(bb_first) {
         bb_first = false;
         bb_queue = bb_now;
@@ -142,6 +135,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 			  bb_cur->next = bb_now;
 			  bb_cur = bb_now;
       }
+      afl_global_bb_id++;
     }
 
   /* Instrument all the things! */
@@ -156,7 +150,7 @@ bool AFLCoverage::runOnModule(Module &M) {
         BasicBlock::iterator IP = newBB->getFirstInsertionPt();
         IRBuilder<>          IRB(&(*IP));
          /* Set the ID of the inserted basic block */
-        ConstantInt *CurLoc = ConstantInt::get(Int32Ty, afl_global_id++);
+        ConstantInt *CurLoc = ConstantInt::get(Int32Ty, afl_global_edge_id++);
         /* Load SHM bb pointer, added by LH. */
         LoadInst *BBPtr = IRB.CreateLoad(AFLBBPtr);
         BBPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
@@ -186,7 +180,7 @@ bool AFLCoverage::runOnModule(Module &M) {
     }  
   }
 
-  
+  uint32_t afl_global_id = (afl_global_bb_id > afl_global_edge_id) ? afl_global_bb_id : afl_global_edge_id;
 
 #ifdef __x86_64__
   now_map_size = ((afl_global_id>>3)+1)<<3;
